@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<info>
+    <id>groupfolders_acl</id>
+    <name>Group Folders ACL</name>
+    <summary>REST API for Group Folders ACL permissions</summary>
+    <description>Simple REST API to set ACL permissions on Group Folders subfolders via occ commands</description>
+    <version>1.0.0</version>
+    <licence>agpl</licence>
+    <author>Community</author>
+    <namespace>GroupFoldersAcl</namespace>
+    <category>tools</category>
+    <dependencies>
+        <nextcloud min-version="25" max-version="32"/>
+    </dependencies>
+</info>

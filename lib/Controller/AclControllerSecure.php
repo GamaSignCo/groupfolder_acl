@@ -260,5 +260,4 @@ class AclController extends Controller {
             'message' => "Permissions cleared for group: {$group}"
         ]);
     }
-
 }

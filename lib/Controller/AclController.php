@@ -118,9 +118,12 @@ class AclController extends Controller {
                     break;
                 }
             }
-            
-            // Validate path characters
-            if (!preg_match('/^[\/a-zA-Z0-9._\s-]+$/', $path)) {
+
+            // Allow Unicode letters and a limited set of punctuation including square brackets,
+            // commas, colons, percent, plus and quotes which are commonly used in folder names.
+            // Use Unicode flag (u) to accept non-ASCII characters.
+            $pattern = "/^[\/\p{L}0-9._\s\-\[\],:@%+\"'´]+$/u";
+            if (!preg_match($pattern, $path)) {
                 $errors[] = 'Path contains invalid characters';
             }
         }

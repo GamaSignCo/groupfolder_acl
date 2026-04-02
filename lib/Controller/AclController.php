@@ -4,19 +4,32 @@ namespace OCA\GroupFoldersAcl\Controller;
 use OCP\AppFramework\Controller;
 use OCP\AppFramework\Http\JSONResponse;
 use OCP\AppFramework\Http\Attribute\NoCSRFRequired;
+use OCP\ICacheFactory;
 use OCP\IGroupManager;
 use OCP\IRequest;
+use OCP\IUserSession;
 use Psr\Log\LoggerInterface;
 
 class AclController extends Controller {
 
     private IGroupManager $groupManager;
     private LoggerInterface $logger;
+    private IUserSession $userSession;
+    private ICacheFactory $cacheFactory;
 
-    public function __construct($AppName, IRequest $request, IGroupManager $groupManager, LoggerInterface $logger) {
+    public function __construct(
+        $AppName,
+        IRequest $request,
+        IGroupManager $groupManager,
+        LoggerInterface $logger,
+        IUserSession $userSession,
+        ICacheFactory $cacheFactory
+    ) {
         parent::__construct($AppName, $request);
         $this->groupManager = $groupManager;
         $this->logger = $logger;
+        $this->userSession = $userSession;
+        $this->cacheFactory = $cacheFactory;
     }
 
     /**
@@ -169,11 +182,12 @@ class AclController extends Controller {
 
     #[NoCSRFRequired]
     public function getGroups() {
-        $user = \OC::$server->getUserSession()->getUser();
+        $user = $this->userSession->getUser();
         if (!$user) {
             return new JSONResponse(['error' => 'Not authenticated'], 401);
         }
-        if (!\OC_User::isAdminUser($user->getUID())) {
+        $adminGroup = $this->groupManager->get('admin');
+        if (!$adminGroup || !$adminGroup->inGroup($user)) {
             return new JSONResponse(['error' => 'Insufficient permissions — admin required'], 403);
         }
 
@@ -197,15 +211,19 @@ class AclController extends Controller {
 
     private function doSetPermissions() {
         // Enhanced rate limiting with user identification
-        $user = \OC::$server->getUserSession()->getUser();
+        $user = $this->userSession->getUser();
         if (!$user) {
             return new JSONResponse(['error' => 'Not authenticated'], 401);
         }
+        $adminGroup = $this->groupManager->get('admin');
+        if (!$adminGroup || !$adminGroup->inGroup($user)) {
+            return new JSONResponse(['error' => 'Insufficient permissions — admin required'], 403);
+        }
         $userId = $user->getUID();
         $userIp = $this->request->getRemoteAddress();
-        $cacheKey = 'acl_rate_limit_' . $userId . '_' . hash('md5', $userIp);
+        $cacheKey = 'acl_rate_limit_' . $userId . '_' . hash('sha256', $userIp);
         
-        $cache = \OC::$server->getMemCacheFactory()->createDistributed('acl');
+        $cache = $this->cacheFactory->createDistributed('acl');
         $requests = $cache->get($cacheKey) ?: 0;
         
         if ($requests >= 30) { // Reduced from 60 to 30 for better security
@@ -295,9 +313,13 @@ class AclController extends Controller {
 
     #[NoCSRFRequired]
     public function clearPermissions() {
-        $user = \OC::$server->getUserSession()->getUser();
+        $user = $this->userSession->getUser();
         if (!$user) {
             return new JSONResponse(['error' => 'Not authenticated'], 401);
+        }
+        $adminGroup = $this->groupManager->get('admin');
+        if (!$adminGroup || !$adminGroup->inGroup($user)) {
+            return new JSONResponse(['error' => 'Insufficient permissions — admin required'], 403);
         }
         $userId = $user->getUID();
 

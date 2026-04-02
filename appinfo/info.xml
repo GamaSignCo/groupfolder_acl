@@ -4,7 +4,7 @@
     <name>Group Folders ACL</name>
     <summary>REST API for Group Folders ACL permissions</summary>
     <description>Simple REST API to set ACL permissions on Group Folders subfolders via occ commands</description>
-    <version>1.3.0</version>
+    <version>1.4.0</version>
     <licence>agpl</licence>
     <author>Community</author>
     <namespace>GroupFoldersAcl</namespace>

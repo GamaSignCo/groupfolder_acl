@@ -60,35 +60,58 @@ class AclController extends Controller {
             ['app' => 'groupfolders_acl']
         );
 
-        // Execute with timeout and proper error handling
-        $descriptors = [
-            0 => ['pipe', 'r'],  // stdin
-            1 => ['pipe', 'w'],  // stdout
-            2 => ['pipe', 'w']   // stderr
-        ];
+        // Execute with timeout and proper error handling.
+        // proc_open is preferred (separate stderr), but fall back to exec() if
+        // proc_open is listed in PHP's disable_functions — calling a disabled
+        // function generates an uncatchable E_ERROR fatal, so we must guard
+        // with function_exists() before attempting to use it.
+        if (function_exists('proc_open')) {
+            $descriptors = [
+                0 => ['pipe', 'r'],  // stdin
+                1 => ['pipe', 'w'],  // stdout
+                2 => ['pipe', 'w']   // stderr
+            ];
 
-        $process = proc_open($fullCommand, $descriptors, $pipes);
-        
-        if (!is_resource($process)) {
-            return ['success' => false, 'error' => 'Failed to start process'];
+            $process = proc_open($fullCommand, $descriptors, $pipes);
+
+            if (!is_resource($process)) {
+                return ['success' => false, 'error' => 'Failed to start process'];
+            }
+
+            // Close stdin
+            fclose($pipes[0]);
+
+            // Read output with timeout
+            $output = stream_get_contents($pipes[1], 8192); // Limit output size
+            $error = stream_get_contents($pipes[2], 1024);
+
+            fclose($pipes[1]);
+            fclose($pipes[2]);
+
+            $returnCode = proc_close($process);
+
+            return [
+                'success' => $returnCode === 0,
+                'output' => trim($output ?: ''),
+                'error' => trim($error ?: ''),
+                'return_code' => $returnCode
+            ];
         }
 
-        // Close stdin
-        fclose($pipes[0]);
+        // Fallback: exec() merges stderr into stdout via '2>&1'.
+        if (!function_exists('exec')) {
+            return ['success' => false, 'error' => 'Neither proc_open nor exec is available (check PHP disable_functions)'];
+        }
 
-        // Read output with timeout
-        $output = stream_get_contents($pipes[1], 8192); // Limit output size
-        $error = stream_get_contents($pipes[2], 1024);
-        
-        fclose($pipes[1]);
-        fclose($pipes[2]);
-
-        $returnCode = proc_close($process);
+        $execOutput = [];
+        $returnCode = 0;
+        exec($fullCommand . ' 2>&1', $execOutput, $returnCode);
+        $combined = trim(implode("\n", $execOutput));
 
         return [
             'success' => $returnCode === 0,
-            'output' => trim($output ?: ''),
-            'error' => trim($error ?: ''),
+            'output' => $combined,
+            'error' => $returnCode !== 0 ? $combined : '',
             'return_code' => $returnCode
         ];
     }

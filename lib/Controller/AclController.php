@@ -3,6 +3,7 @@ namespace OCA\GroupFoldersAcl\Controller;
 
 use OCP\AppFramework\Controller;
 use OCP\AppFramework\Http\JSONResponse;
+use OCP\AppFramework\Http\Attribute\NoCSRFRequired;
 use OCP\IGroupManager;
 use OCP\IRequest;
 
@@ -163,9 +164,7 @@ class AclController extends Controller {
         return $errors;
     }
 
-    /**
-     * @NoCSRFRequired
-     */
+    #[NoCSRFRequired]
     public function getGroups() {
         $user = \OC::$server->getUserSession()->getUser();
         if (!$user) {
@@ -182,9 +181,7 @@ class AclController extends Controller {
         return new JSONResponse(['groups' => $groupIds]);
     }
 
-    /**
-     * @NoCSRFRequired
-     */
+    #[NoCSRFRequired]
     public function setPermissions() {
         try {
         return $this->doSetPermissions();
@@ -293,9 +290,7 @@ class AclController extends Controller {
         ]);
     }  // end doSetPermissions
 
-    /**
-     * @NoCSRFRequired
-     */
+    #[NoCSRFRequired]
     public function clearPermissions() {
         $user = \OC::$server->getUserSession()->getUser();
         if (!$user) {

@@ -6,14 +6,17 @@ use OCP\AppFramework\Http\JSONResponse;
 use OCP\AppFramework\Http\Attribute\NoCSRFRequired;
 use OCP\IGroupManager;
 use OCP\IRequest;
+use Psr\Log\LoggerInterface;
 
 class AclController extends Controller {
 
     private IGroupManager $groupManager;
+    private LoggerInterface $logger;
 
-    public function __construct($AppName, IRequest $request, IGroupManager $groupManager) {
+    public function __construct($AppName, IRequest $request, IGroupManager $groupManager, LoggerInterface $logger) {
         parent::__construct($AppName, $request);
         $this->groupManager = $groupManager;
+        $this->logger = $logger;
     }
 
     /**
@@ -37,7 +40,7 @@ class AclController extends Controller {
             $argStr = (string)$arg;
             foreach ($argDangerousPatterns as $pattern) {
                 if (strpos($argStr, $pattern) !== false) {
-                    \OC::$server->getLogger()->warning(
+                    $this->logger->warning(
                         'Blocked potentially dangerous argument: ' . $argStr,
                         ['app' => 'groupfolders_acl']
                     );
@@ -56,7 +59,7 @@ class AclController extends Controller {
                       implode(' ', $escapedArgs);
 
         // Log the command for audit purposes
-        \OC::$server->getLogger()->info(
+        $this->logger->info(
             'Executing OCC command: ' . $command . ' with args: ' . implode(', ', $args),
             ['app' => 'groupfolders_acl']
         );
@@ -187,7 +190,7 @@ class AclController extends Controller {
         return $this->doSetPermissions();
         } catch (\Throwable $e) {
             $msg = $e->getMessage() . ' at ' . $e->getFile() . ':' . $e->getLine();
-            \OC::$server->getLogger()->error('groupfolders_acl setPermissions exception: ' . $msg, ['app' => 'groupfolders_acl']);
+            $this->logger->error('groupfolders_acl setPermissions exception: ' . $msg, ['app' => 'groupfolders_acl']);
             return new JSONResponse(['error' => 'Exception: ' . $msg], 500);
         }
     }
@@ -206,7 +209,7 @@ class AclController extends Controller {
         $requests = $cache->get($cacheKey) ?: 0;
         
         if ($requests >= 30) { // Reduced from 60 to 30 for better security
-            \OC::$server->getLogger()->warning(
+            $this->logger->warning(
                 'Rate limit exceeded for user: ' . $userId . ' from IP: ' . $userIp,
                 ['app' => 'groupfolders_acl']
             );
@@ -276,7 +279,7 @@ class AclController extends Controller {
 
         if ($result['success']) {
             // Log successful permission change for audit
-            \OC::$server->getLogger()->info(
+            $this->logger->info(
                 "Permissions set for group '$group' on folder $folderId:$path by user $userId",
                 ['app' => 'groupfolders_acl', 'permissions' => $permissions]
             );
@@ -314,7 +317,7 @@ class AclController extends Controller {
         ]);
 
         if ($result['success']) {
-            \OC::$server->getLogger()->info(
+            $this->logger->info(
                 "Permissions cleared for group '$group' on folder $folderId:$path by user $userId",
                 ['app' => 'groupfolders_acl']
             );

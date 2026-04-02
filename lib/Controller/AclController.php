@@ -3,12 +3,16 @@ namespace OCA\GroupFoldersAcl\Controller;
 
 use OCP\AppFramework\Controller;
 use OCP\AppFramework\Http\JSONResponse;
+use OCP\IGroupManager;
 use OCP\IRequest;
 
 class AclController extends Controller {
 
-    public function __construct($AppName, IRequest $request) {
+    private IGroupManager $groupManager;
+
+    public function __construct($AppName, IRequest $request, IGroupManager $groupManager) {
         parent::__construct($AppName, $request);
+        $this->groupManager = $groupManager;
     }
 
     /**
@@ -129,6 +133,25 @@ class AclController extends Controller {
         }
 
         return $errors;
+    }
+
+    /**
+     * @NoCSRFRequired
+     */
+    public function getGroups() {
+        $user = \OC::$server->getUserSession()->getUser();
+        if (!$user) {
+            return new JSONResponse(['error' => 'Not authenticated'], 401);
+        }
+        if (!\OC_User::isAdminUser($user->getUID())) {
+            return new JSONResponse(['error' => 'Insufficient permissions — admin required'], 403);
+        }
+
+        $groups = $this->groupManager->search('');
+        $groupIds = array_map(fn($group) => $group->getGID(), $groups);
+        sort($groupIds);
+
+        return new JSONResponse(['groups' => $groupIds]);
     }
 
     /**

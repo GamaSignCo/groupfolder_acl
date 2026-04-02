@@ -25,29 +25,34 @@ class AclController extends Controller {
             return ['success' => false, 'error' => 'Invalid server configuration'];
         }
 
-        // Build command with proper escaping
+        // Validate each user-supplied argument individually.
+        // NOTE: Do NOT check the fully assembled $fullCommand — it contains
+        // shell plumbing like '2>&1' which would falsely match '>' and '&',
+        // and permission args like '-delete' would match the word 'delete'.
+        // User-supplied inputs (folderId, group, path) are already validated
+        // by validateInputs(); this check is a secondary defence.
+        $argDangerousPatterns = [';', '|', '&', '`', '$', '>', '<', '../', '..\\', '/etc/', '/var/', '/root/'];
+        foreach ($args as $arg) {
+            $argStr = (string)$arg;
+            foreach ($argDangerousPatterns as $pattern) {
+                if (strpos($argStr, $pattern) !== false) {
+                    \OC::$server->getLogger()->warning(
+                        'Blocked potentially dangerous argument: ' . $argStr,
+                        ['app' => 'groupfolders_acl']
+                    );
+                    return ['success' => false, 'error' => 'Argument blocked for security'];
+                }
+            }
+        }
+
+        // Build command with proper escaping.
+        // Do NOT append '2>&1' — stderr is already captured via proc_open's
+        // descriptor array below, and '2>&1' would trigger the patterns check.
         $escapedArgs = array_map('escapeshellarg', $args);
         $fullCommand = escapeshellcmd('php') . ' ' . 
                       escapeshellarg($serverRoot . '/occ') . ' ' . 
                       escapeshellcmd($command) . ' ' . 
-                      implode(' ', $escapedArgs) . ' 2>&1';
-
-        // Additional security: Validate command doesn't contain dangerous patterns
-        $dangerousPatterns = [
-            ';', '|', '&', '`', '$', '>', '<', 
-            'rm ', 'delete', 'drop', 'truncate',
-            '../', '..\\', '/etc/', '/var/', '/root/'
-        ];
-        
-        foreach ($dangerousPatterns as $pattern) {
-            if (stripos($fullCommand, $pattern) !== false) {
-                \OC::$server->getLogger()->warning(
-                    'Blocked potentially dangerous command: ' . $fullCommand,
-                    ['app' => 'groupfolders_acl']
-                );
-                return ['success' => false, 'error' => 'Command blocked for security'];
-            }
-        }
+                      implode(' ', $escapedArgs);
 
         // Log the command for audit purposes
         \OC::$server->getLogger()->info(
@@ -158,8 +163,22 @@ class AclController extends Controller {
      * @NoCSRFRequired
      */
     public function setPermissions() {
+        try {
+        return $this->doSetPermissions();
+        } catch (\Throwable $e) {
+            $msg = $e->getMessage() . ' at ' . $e->getFile() . ':' . $e->getLine();
+            \OC::$server->getLogger()->error('groupfolders_acl setPermissions exception: ' . $msg, ['app' => 'groupfolders_acl']);
+            return new JSONResponse(['error' => 'Exception: ' . $msg], 500);
+        }
+    }
+
+    private function doSetPermissions() {
         // Enhanced rate limiting with user identification
-        $userId = \OC::$server->getUserSession()->getUser()->getUID();
+        $user = \OC::$server->getUserSession()->getUser();
+        if (!$user) {
+            return new JSONResponse(['error' => 'Not authenticated'], 401);
+        }
+        $userId = $user->getUID();
         $userIp = $this->request->getRemoteAddress();
         $cacheKey = 'acl_rate_limit_' . $userId . '_' . hash('md5', $userIp);
         
@@ -249,14 +268,18 @@ class AclController extends Controller {
             'error' => $result['error'] ?? null,
             'permissions' => $permissions
         ]);
-    }
+    }  // end doSetPermissions
 
     /**
      * @NoCSRFRequired
      */
     public function clearPermissions() {
-        $userId = \OC::$server->getUserSession()->getUser()->getUID();
-        
+        $user = \OC::$server->getUserSession()->getUser();
+        if (!$user) {
+            return new JSONResponse(['error' => 'Not authenticated'], 401);
+        }
+        $userId = $user->getUID();
+
         $folderId = $this->request->getParam('folderId');
         $group = $this->request->getParam('group');
         $path = $this->request->getParam('path', '/');

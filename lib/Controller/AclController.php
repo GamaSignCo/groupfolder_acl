@@ -3,7 +3,6 @@ namespace OCA\GroupFoldersAcl\Controller;
 
 use OCP\AppFramework\Controller;
 use OCP\AppFramework\Http\JSONResponse;
-use OCP\AppFramework\Http\Attribute\NoCSRFRequired;
 use OCP\ICacheFactory;
 use OCP\IGroupManager;
 use OCP\IRequest;
@@ -193,32 +192,13 @@ class AclController extends Controller {
         return $errors;
     }
 
-    #[NoCSRFRequired]
-    public function getGroups() {
-        $user = $this->userSession->getUser();
-        if (!$user) {
-            return new JSONResponse(['error' => 'Not authenticated'], 401);
-        }
-        $adminGroup = $this->groupManager->get('admin');
-        if (!$adminGroup || !$adminGroup->inGroup($user)) {
-            return new JSONResponse(['error' => 'Insufficient permissions — admin required'], 403);
-        }
-
-        $groups = $this->groupManager->search('');
-        $groupIds = array_map(fn($group) => $group->getGID(), $groups);
-        sort($groupIds);
-
-        return new JSONResponse(['groups' => $groupIds]);
-    }
-
-    #[NoCSRFRequired]
     public function setPermissions() {
         try {
         return $this->doSetPermissions();
         } catch (\Throwable $e) {
             $msg = $e->getMessage() . ' at ' . $e->getFile() . ':' . $e->getLine();
             $this->logger->error('groupfolders_acl setPermissions exception: ' . $msg, ['app' => 'groupfolders_acl']);
-            return new JSONResponse(['error' => 'Exception: ' . $msg], 500);
+            return new JSONResponse(['error' => 'Internal server error. Check server logs for details.'], 500);
         }
     }
 
@@ -282,9 +262,12 @@ class AclController extends Controller {
         ]);
 
         if (!$enableResult['success']) {
+            $this->logger->error(
+                "Failed to enable advanced permissions for folder $folderId:$path",
+                ['app' => 'groupfolders_acl', 'error' => $enableResult['error']]
+            );
             return new JSONResponse([
-                'error' => 'Failed to enable advanced permissions',
-                'details' => $enableResult['error']
+                'error' => 'Failed to enable advanced permissions. Check server logs for details.'
             ], 500);
         }
 
@@ -308,31 +291,44 @@ class AclController extends Controller {
         // Execute the permission setting command
         $result = $this->executeSecureCommand('groupfolders:permissions', $commandArgs);
 
-        if ($result['success']) {
-            // Log successful permission change for audit
-            $this->logger->info(
-                "Permissions set for group '$group' on folder $folderId:$path by user $userId",
-                ['app' => 'groupfolders_acl', 'permissions' => $permissions]
-            );
-        }
-
         if (!$result['success']) {
             $this->logger->error(
                 "Permission setting failed for group '$group' on folder $folderId:$path",
                 ['app' => 'groupfolders_acl', 'output' => $result['output'], 'error' => $result['error']]
             );
+            return new JSONResponse([
+                'success' => false,
+                'message' => 'Failed to set permissions',
+                'error' => 'Operation failed. Check server logs for details.',
+                'permissions' => $permissions
+            ], 500);
         }
 
+        // Log successful permission change for audit
+        $this->logger->info(
+            "Permissions set for group '$group' on folder $folderId:$path by user $userId",
+            ['app' => 'groupfolders_acl', 'permissions' => $permissions]
+        );
+
         return new JSONResponse([
-            'success' => $result['success'],
-            'message' => $result['success'] ? 'Permissions set successfully' : 'Failed to set permissions',
-            'error' => $result['success'] ? null : 'Operation failed. Check server logs for details.',
+            'success' => true,
+            'message' => 'Permissions set successfully',
+            'error' => null,
             'permissions' => $permissions
         ]);
     }  // end doSetPermissions
 
-    #[NoCSRFRequired]
     public function clearPermissions() {
+        try {
+            return $this->doClearPermissions();
+        } catch (\Throwable $e) {
+            $msg = $e->getMessage() . ' at ' . $e->getFile() . ':' . $e->getLine();
+            $this->logger->error('groupfolders_acl clearPermissions exception: ' . $msg, ['app' => 'groupfolders_acl']);
+            return new JSONResponse(['error' => 'Internal server error. Check server logs for details.'], 500);
+        }
+    }
+
+    private function doClearPermissions() {
         $user = $this->userSession->getUser();
         if (!$user) {
             return new JSONResponse(['error' => 'Not authenticated'], 401);
@@ -360,24 +356,27 @@ class AclController extends Controller {
             $folderId, $path, '--group', $group, 'clear'
         ]);
 
-        if ($result['success']) {
-            $this->logger->info(
-                "Permissions cleared for group '$group' on folder $folderId:$path by user $userId",
-                ['app' => 'groupfolders_acl']
-            );
-        }
-
         if (!$result['success']) {
             $this->logger->error(
                 "Permission clear failed for group '$group' on folder $folderId:$path",
                 ['app' => 'groupfolders_acl', 'output' => $result['output'], 'error' => $result['error']]
             );
+            return new JSONResponse([
+                'success' => false,
+                'message' => 'Failed to clear permissions',
+                'error' => 'Operation failed. Check server logs for details.'
+            ], 500);
         }
 
+        $this->logger->info(
+            "Permissions cleared for group '$group' on folder $folderId:$path by user $userId",
+            ['app' => 'groupfolders_acl']
+        );
+
         return new JSONResponse([
-            'success' => $result['success'],
-            'message' => $result['success'] ? "Permissions cleared for group: {$group}" : 'Failed to clear permissions',
-            'error' => $result['success'] ? null : 'Operation failed. Check server logs for details.'
+            'success' => true,
+            'message' => "Permissions cleared for group: {$group}",
+            'error' => null
         ]);
     }
 

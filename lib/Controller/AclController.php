@@ -98,9 +98,21 @@ class AclController extends Controller {
             // Close stdin
             fclose($pipes[0]);
 
-            // Read output with timeout
-            $output = stream_get_contents($pipes[1], 8192); // Limit output size
-            $error = stream_get_contents($pipes[2], 1024);
+            // Read output — loop in chunks (up to 1 MB) to avoid truncating long occ output
+            $output = '';
+            while (!feof($pipes[1])) {
+                $chunk = fread($pipes[1], 65536);
+                if ($chunk === false || $chunk === '') break;
+                $output .= $chunk;
+                if (strlen($output) >= 1048576) break;  // 1 MB safety cap
+            }
+            $error = '';
+            while (!feof($pipes[2])) {
+                $chunk = fread($pipes[2], 65536);
+                if ($chunk === false || $chunk === '') break;
+                $error .= $chunk;
+                if (strlen($error) >= 524288) break;  // 512 KB safety cap
+            }
 
             fclose($pipes[1]);
             fclose($pipes[2]);
@@ -139,9 +151,10 @@ class AclController extends Controller {
     private function validateInputs($folderId, $group, $path): array {
         $errors = [];
 
-        // Validate folder ID
-        if (!$folderId || !is_numeric($folderId) || $folderId < 1 || $folderId > 999999) {
-            $errors[] = 'Invalid folder ID (must be 1-999999)';
+        // Validate folder ID — filter_var rejects floats/exponential notation that is_numeric() allows
+        $folderIdInt = filter_var($folderId, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1, 'max_range' => 999999]]);
+        if ($folderIdInt === false) {
+            $errors[] = 'Invalid folder ID (must be integer 1-999999)';
         }
 
         // Validate group name
@@ -246,8 +259,8 @@ class AclController extends Controller {
         if (!empty($validationErrors)) {
             return new JSONResponse(['error' => implode(', ', $validationErrors)], 400);
         }
-
-        // Validate permission values
+        // Use the integer form for all subsequent command calls
+        $folderId = (int)$folderId;
         $validPermissions = ['allow', 'deny', null, ''];
         $permissions = [
             'read' => $this->request->getParam('read'),
@@ -258,7 +271,7 @@ class AclController extends Controller {
         ];
 
         foreach ($permissions as $type => $value) {
-            if ($value !== null && !in_array($value, $validPermissions)) {
+            if ($value !== null && !in_array($value, $validPermissions, true)) {
                 return new JSONResponse(['error' => "Invalid $type permission value"], 400);
             }
         }
@@ -303,10 +316,17 @@ class AclController extends Controller {
             );
         }
 
+        if (!$result['success']) {
+            $this->logger->error(
+                "Permission setting failed for group '$group' on folder $folderId:$path",
+                ['app' => 'groupfolders_acl', 'output' => $result['output'], 'error' => $result['error']]
+            );
+        }
+
         return new JSONResponse([
             'success' => $result['success'],
-            'output' => $result['output'],
-            'error' => $result['error'] ?? null,
+            'message' => $result['success'] ? 'Permissions set successfully' : 'Failed to set permissions',
+            'error' => $result['success'] ? null : 'Operation failed. Check server logs for details.',
             'permissions' => $permissions
         ]);
     }  // end doSetPermissions
@@ -332,6 +352,8 @@ class AclController extends Controller {
         if (!empty($validationErrors)) {
             return new JSONResponse(['error' => implode(', ', $validationErrors)], 400);
         }
+        // Use the integer form for all subsequent command calls
+        $folderId = (int)$folderId;
 
         // Execute clear command
         $result = $this->executeSecureCommand('groupfolders:permissions', [
@@ -345,11 +367,17 @@ class AclController extends Controller {
             );
         }
 
+        if (!$result['success']) {
+            $this->logger->error(
+                "Permission clear failed for group '$group' on folder $folderId:$path",
+                ['app' => 'groupfolders_acl', 'output' => $result['output'], 'error' => $result['error']]
+            );
+        }
+
         return new JSONResponse([
             'success' => $result['success'],
-            'output' => $result['output'],
-            'error' => $result['error'] ?? null,
-            'message' => "Permissions cleared for group: {$group}"
+            'message' => $result['success'] ? "Permissions cleared for group: {$group}" : 'Failed to clear permissions',
+            'error' => $result['success'] ? null : 'Operation failed. Check server logs for details.'
         ]);
     }
 

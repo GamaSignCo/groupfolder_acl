@@ -62,13 +62,9 @@ class AclController extends Controller {
         }
 
         // Build command with proper escaping.
-        // Do NOT append '2>&1' — stderr is already captured via proc_open's
-        // descriptor array below, and '2>&1' would trigger the patterns check.
-        $escapedArgs = array_map('escapeshellarg', $args);
-        $fullCommand = escapeshellcmd('php') . ' ' . 
-                      escapeshellarg($serverRoot . '/occ') . ' ' . 
-                      escapeshellcmd($command) . ' ' . 
-                      implode(' ', $escapedArgs);
+        // By passing an array instead of a string to proc_open, we bypass the system
+        // shell entirely (no /bin/sh -c). This makes command injection impossible.
+        $fullCommandArray = array_merge([$serverRoot . '/occ', $command], $args);
 
         // Log the command for audit purposes
         $this->logger->info(
@@ -88,7 +84,7 @@ class AclController extends Controller {
                 2 => ['pipe', 'w']   // stderr
             ];
 
-            $process = proc_open($fullCommand, $descriptors, $pipes);
+            $process = proc_open(array_merge(['php'], $fullCommandArray), $descriptors, $pipes);
 
             if (!is_resource($process)) {
                 return ['success' => false, 'error' => 'Failed to start process'];
@@ -126,14 +122,21 @@ class AclController extends Controller {
             ];
         }
 
-        // Fallback: exec() merges stderr into stdout via '2>&1'.
+        // Fallback: exec() is susceptible to shell interpretation, so we aggressively
+        // construct the string using escapeshellarg and escapeshellcmd combined.
         if (!function_exists('exec')) {
             return ['success' => false, 'error' => 'Neither proc_open nor exec is available (check PHP disable_functions)'];
         }
 
+        $escapedArgs = array_map('escapeshellarg', $args);
+        $fullCommandString = escapeshellcmd('php') . ' ' . 
+                             escapeshellarg($serverRoot . '/occ') . ' ' . 
+                             escapeshellcmd($command) . ' ' . 
+                             implode(' ', $escapedArgs);
+
         $execOutput = [];
         $returnCode = 0;
-        exec($fullCommand . ' 2>&1', $execOutput, $returnCode);
+        exec($fullCommandString . ' 2>&1', $execOutput, $returnCode);
         $combined = trim(implode("\n", $execOutput));
 
         return [
